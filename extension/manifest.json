@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Image Downloader",
+  "version": "1.0",
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "downloads",
+    "activeTab",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://hentaipaw.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
