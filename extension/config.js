@@ -18,12 +18,19 @@ export const CONFIG = {
   MESSAGES: {
     START: "DOWNLOADING...",
     DONE: "COMPLETED",
-    ERROR: "ERROR OCCURRED"
+    ERROR: "ERROR OCCURRED",
+    ERROR_NO_IMAGE: "NO IMAGE FOUND",
+    ERROR_PAGE_LOAD: "PAGE LOAD FAILED"
   },
   REQUEST_TYPES: {
     START: "START_DOWNLOAD",
     PROGRESS: "PROGRESS",
-    DONE: "DONE"
+    DONE: "DONE",
+    ERROR: "ERROR"
   },
+  // ページ読み込み完了を待つ最大時間（ミリ秒）
+  PAGE_LOAD_TIMEOUT: 15000,
+  // リクエスト間の待機時間（ミリ秒）
+  REQUEST_DELAY: 1500,
   DEFAULT_MAX_PAGES: 43
 };

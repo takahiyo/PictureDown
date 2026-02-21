@@ -8,7 +8,8 @@
   "permissions": [
     "downloads",
     "activeTab",
-    "tabs"
+    "tabs",
+    "scripting"
   ],
   "host_permissions": [
     "*://hentaipaw.com/*"
