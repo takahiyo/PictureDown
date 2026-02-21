@@ -1,21 +1,6 @@
 import { CONFIG } from './config.js';
 
 /**
- * サムネイルURLをフルサイズURLに変換する。
- * Cloudflare Image Delivery のvariant部分を "public" に変更する。
- */
-const toFullsizeUrl = (thumbnailUrl) => {
-  if (!thumbnailUrl.includes('imagedelivery.net')) return thumbnailUrl;
-  // 形式: https://imagedelivery.net/ACCOUNT/IMAGE_ID/VARIANT
-  const parts = thumbnailUrl.split('/');
-  if (parts.length >= 2) {
-    parts[parts.length - 1] = 'public';
-    return parts.join('/');
-  }
-  return thumbnailUrl;
-};
-
-/**
  * URLから安全なファイル拡張子を取得する。
  */
 const getExtension = (url) => {
@@ -41,8 +26,45 @@ const sendProgress = (type, data = {}) => {
 };
 
 /**
- * ビューアページのHTMLからフルサイズの画像URLを抽出する。
- * __NEXT_DATA__ の JSON を優先的に解析する。
+ * 1枚の画像をダウンロードする。
+ * フォルダ付きファイル名で失敗した場合は、フォルダなしでも試す。
+ */
+const downloadOneImage = async (imgUrl, folderName, pageNum) => {
+  const paddedPage = String(pageNum).padStart(3, '0');
+  const ext = getExtension(imgUrl);
+
+  // まずフォルダ付きで試す
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: imgUrl,
+      filename: `${folderName}/${paddedPage}.${ext}`,
+      saveAs: false,
+      conflictAction: 'overwrite'
+    });
+    console.log(`[PictureDown] DL成功 (ID:${downloadId}): ${folderName}/${paddedPage}.${ext}`);
+    return true;
+  } catch (e) {
+    console.warn(`[PictureDown] フォルダ付きDL失敗、フォルダなしで再試行:`, e.message);
+  }
+
+  // フォルダなしで再試行
+  try {
+    const downloadId = await chrome.downloads.download({
+      url: imgUrl,
+      filename: `${folderName}_${paddedPage}.${ext}`,
+      saveAs: false,
+      conflictAction: 'overwrite'
+    });
+    console.log(`[PictureDown] DL成功 (ID:${downloadId}): ${folderName}_${paddedPage}.${ext}`);
+    return true;
+  } catch (e2) {
+    console.error(`[PictureDown] DL完全失敗:`, e2.message);
+    return false;
+  }
+};
+
+/**
+ * ビューアページのHTMLから画像URLを抽出する。
  */
 const extractImageUrlFromHtml = (html) => {
   // __NEXT_DATA__ から画像URLを取得
@@ -51,12 +73,8 @@ const extractImageUrlFromHtml = (html) => {
     try {
       const data = JSON.parse(nextDataMatch[1]);
       const jsonStr = JSON.stringify(data?.props?.pageProps);
-
-      // imagedelivery.net のURLを探す
       const cdnMatch = jsonStr.match(/https:\/\/imagedelivery\.net\/[^"\\]+/);
-      if (cdnMatch) return toFullsizeUrl(cdnMatch[0]);
-
-      // その他の画像URLを探す
+      if (cdnMatch) return cdnMatch[0];
       const imgMatch = jsonStr.match(/https?:\/\/[^"\\]+\.(?:jpg|jpeg|png|webp|gif)/i);
       if (imgMatch) return imgMatch[0];
     } catch (_e) {
@@ -64,42 +82,33 @@ const extractImageUrlFromHtml = (html) => {
     }
   }
 
-  // og:image メタタグから取得
+  // og:image から取得
   const ogMatch = html.match(/property="og:image"\s+content="([^"]+)"/);
   if (ogMatch) return ogMatch[1];
 
   // imgタグから imagedelivery.net のURLを取得
   const imgMatch = html.match(/src="(https:\/\/imagedelivery\.net\/[^"]+)"/);
-  if (imgMatch) return toFullsizeUrl(imgMatch[1]);
+  if (imgMatch) return imgMatch[1];
 
   return null;
 };
 
 /**
- * 方式A: サムネイル画像URLから直接ダウンロード（最速・ページ遷移なし）
+ * 方式A: 画像URLリストから直接ダウンロード（最速・ページ遷移なし）
+ * URLはそのまま使う（変換しない）。
  */
 const downloadFromImageUrls = async (imageUrls, folderName) => {
   let successCount = 0;
   let failCount = 0;
   const total = imageUrls.length;
 
-  console.log(`[PictureDown] 方式A: ${total}枚の画像URLから直接ダウンロード`);
+  console.log(`[PictureDown] 方式A開始: ${total}枚の画像URLから直接ダウンロード`);
 
   for (let i = 0; i < total; i++) {
-    const fullUrl = toFullsizeUrl(imageUrls[i]);
-    const paddedPage = String(i + 1).padStart(3, '0');
-    const ext = getExtension(fullUrl);
-
-    try {
-      await chrome.downloads.download({
-        url: fullUrl,
-        filename: `${folderName}/${paddedPage}.${ext}`,
-        saveAs: false,
-        conflictAction: 'overwrite'
-      });
+    const ok = await downloadOneImage(imageUrls[i], folderName, i + 1);
+    if (ok) {
       successCount++;
-    } catch (e) {
-      console.error(`[PictureDown] ダウンロード失敗 (${i + 1}/${total}):`, e);
+    } else {
       failCount++;
     }
 
@@ -116,63 +125,52 @@ const downloadFromImageUrls = async (imageUrls, folderName) => {
     }
   }
 
+  console.log(`[PictureDown] 方式A結果: 成功=${successCount}, 失敗=${failCount}`);
   return { successCount, failCount };
 };
 
 /**
- * 方式B: ビューアページのURLリストから fetch() で画像URLを取得してダウンロード
- * ページ遷移不要。バックグラウンドの fetch() でHTMLを取得し、画像URLを抽出する。
+ * 方式B: ビューアリンクを fetch() で取得し、HTMLから画像URLを抽出してダウンロード
+ * ページ遷移なし。
  */
 const downloadFromViewerLinks = async (viewerLinks, folderName) => {
   let successCount = 0;
   let failCount = 0;
   const total = viewerLinks.length;
 
-  console.log(`[PictureDown] 方式B: ${total}件のビューアリンクから fetch で画像取得`);
+  console.log(`[PictureDown] 方式B開始: ${total}件のビューアリンクを fetch`);
 
   for (let i = 0; i < total; i++) {
     try {
       const response = await fetch(viewerLinks[i], {
         credentials: 'include',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-          'Accept-Language': 'ja,en-US;q=0.7,en;q=0.3'
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'ja,en;q=0.5'
         }
       });
 
       if (!response.ok) {
-        console.warn(`[PictureDown] fetch失敗 (${i + 1}): HTTP ${response.status}`);
+        console.warn(`[PictureDown] 方式B: fetch HTTP ${response.status} (${i + 1}/${total})`);
         failCount++;
-        sendProgress(CONFIG.REQUEST_TYPES.PROGRESS, {
-          percentage: Math.floor(((i + 1) / total) * 100),
-          current: i + 1,
-          total,
-          successCount,
-          failCount
-        });
-        continue;
-      }
-
-      const html = await response.text();
-      const imgUrl = extractImageUrlFromHtml(html);
-
-      if (imgUrl) {
-        const paddedPage = String(i + 1).padStart(3, '0');
-        const ext = getExtension(imgUrl);
-        await chrome.downloads.download({
-          url: imgUrl,
-          filename: `${folderName}/${paddedPage}.${ext}`,
-          saveAs: false,
-          conflictAction: 'overwrite'
-        });
-        successCount++;
       } else {
-        console.warn(`[PictureDown] 画像URL抽出失敗 (${i + 1}): ${viewerLinks[i]}`);
-        failCount++;
+        const html = await response.text();
+        const imgUrl = extractImageUrlFromHtml(html);
+
+        if (imgUrl) {
+          const ok = await downloadOneImage(imgUrl, folderName, i + 1);
+          if (ok) {
+            successCount++;
+          } else {
+            failCount++;
+          }
+        } else {
+          console.warn(`[PictureDown] 方式B: 画像URL抽出失敗 (${i + 1}/${total})`);
+          failCount++;
+        }
       }
     } catch (e) {
-      console.error(`[PictureDown] 方式Bエラー (${i + 1}):`, e);
+      console.error(`[PictureDown] 方式Bエラー (${i + 1}):`, e.message);
       failCount++;
     }
 
@@ -189,19 +187,19 @@ const downloadFromViewerLinks = async (viewerLinks, folderName) => {
     }
   }
 
+  console.log(`[PictureDown] 方式B結果: 成功=${successCount}, 失敗=${failCount}`);
   return { successCount, failCount };
 };
 
 /**
  * 方式C: ページ遷移方式（最後の手段）
- * タブを順番に遷移させ、DOM から画像URLを取得する。
  */
 const downloadByNavigation = async (tabId, articleId, folderName, maxPages) => {
   let successCount = 0;
   let failCount = 0;
   const total = maxPages > 0 ? maxPages : 43;
 
-  console.log(`[PictureDown] 方式C: ページ遷移方式 (${total}ページ)`);
+  console.log(`[PictureDown] 方式C開始: ページ遷移方式 (${total}ページ)`);
 
   for (let i = 1; i <= total; i++) {
     const pageUrl = `${CONFIG.BASE_URL}${articleId}${CONFIG.PAGE_PARAM}${i}`;
@@ -255,21 +253,18 @@ const downloadByNavigation = async (tabId, articleId, folderName, maxPages) => {
 
       const imgUrl = results?.[0]?.result;
       if (imgUrl) {
-        const fullUrl = toFullsizeUrl(imgUrl);
-        const ext = getExtension(fullUrl);
-        const paddedPage = String(i).padStart(3, '0');
-        await chrome.downloads.download({
-          url: fullUrl,
-          filename: `${folderName}/${paddedPage}.${ext}`,
-          saveAs: false,
-          conflictAction: 'overwrite'
-        });
-        successCount++;
+        const ok = await downloadOneImage(imgUrl, folderName, i);
+        if (ok) {
+          successCount++;
+        } else {
+          failCount++;
+        }
       } else {
+        console.warn(`[PictureDown] 方式C: 画像未検出 (ページ${i})`);
         failCount++;
       }
     } catch (e) {
-      console.error(`[PictureDown] 方式Cエラー (ページ${i}):`, e);
+      console.error(`[PictureDown] 方式Cエラー (ページ${i}):`, e.message);
       failCount++;
     }
 
@@ -286,35 +281,35 @@ const downloadByNavigation = async (tabId, articleId, folderName, maxPages) => {
     }
   }
 
+  console.log(`[PictureDown] 方式C結果: 成功=${successCount}, 失敗=${failCount}`);
   return { successCount, failCount };
 };
 
 /**
  * メインのダウンロード処理。
- * 3つの方式を優先順位で試す：
- *   A) サムネイル画像URLから直接ダウンロード（最速）
- *   B) ビューアリンクを fetch して画像URLを取得（ページ遷移なし）
- *   C) タブ遷移方式（最後の手段）
+ * 3つの方式を優先順位で自動選択する。
+ * どの方式も完全に失敗した場合は次の方式にフォールバックする。
  */
 const startProcess = async (tabId, articleId, folderName, viewerLinks, imageUrls) => {
   const safeFolderName = sanitizeFolderName(folderName);
-  let result;
+  let result = { successCount: 0, failCount: 0 };
 
+  // 方式A: 画像URLリストから直接ダウンロード
   if (imageUrls && imageUrls.length > 0) {
-    // 方式A: サムネイルURLから直接ダウンロード
     result = await downloadFromImageUrls(imageUrls, safeFolderName);
+  }
 
-    // 1枚もダウンロードできなかった場合は方式Bへ
-    if (result.successCount === 0 && viewerLinks && viewerLinks.length > 0) {
-      console.log('[PictureDown] 方式A失敗、方式Bへフォールバック');
-      result = await downloadFromViewerLinks(viewerLinks, safeFolderName);
-    }
-  } else if (viewerLinks && viewerLinks.length > 0) {
-    // 方式B: ビューアリンクから fetch で取得
+  // 方式Aが完全失敗 → 方式B: ビューアリンクから fetch
+  if (result.successCount === 0 && viewerLinks && viewerLinks.length > 0) {
+    console.log('[PictureDown] 方式Bにフォールバック');
     result = await downloadFromViewerLinks(viewerLinks, safeFolderName);
-  } else {
-    // 方式C: ページ遷移方式（最後の手段）
-    result = await downloadByNavigation(tabId, articleId, safeFolderName, 0);
+  }
+
+  // 方式A・B両方とも完全失敗 → 方式C: ページ遷移
+  if (result.successCount === 0) {
+    console.log('[PictureDown] 方式Cにフォールバック');
+    const totalPages = (viewerLinks?.length) || (imageUrls?.length) || 0;
+    result = await downloadByNavigation(tabId, articleId, safeFolderName, totalPages);
   }
 
   // 完了通知
