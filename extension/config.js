@@ -13,14 +13,17 @@ export const CONFIG = {
   SELECTORS: {
     START_BTN: "#start-download",
     STATUS_TEXT: "#status-message",
-    PROGRESS_BAR: "#progress"
+    PROGRESS_BAR: "#progress",
+    FOLDER_NAME: "#folder-name",
+    PAGE_INFO: "#page-info"
   },
   MESSAGES: {
     START: "DOWNLOADING...",
     DONE: "COMPLETED",
     ERROR: "ERROR OCCURRED",
     ERROR_NO_IMAGE: "NO IMAGE FOUND",
-    ERROR_PAGE_LOAD: "PAGE LOAD FAILED"
+    ERROR_PAGE_LOAD: "PAGE LOAD FAILED",
+    SCANNING: "SCANNING PAGES..."
   },
   REQUEST_TYPES: {
     START: "START_DOWNLOAD",
@@ -28,9 +31,14 @@ export const CONFIG = {
     DONE: "DONE",
     ERROR: "ERROR"
   },
-  // ページ読み込み完了を待つ最大時間（ミリ秒）
-  PAGE_LOAD_TIMEOUT: 15000,
-  // リクエスト間の待機時間（ミリ秒）
+  // ダウンロード間の待機時間（ミリ秒）
+  DOWNLOAD_DELAY: 500,
+  // ページ遷移方式のリクエスト間隔（ミリ秒・フォールバック用）
   REQUEST_DELAY: 1500,
-  DEFAULT_MAX_PAGES: 43
+  // ページ読み込みタイムアウト（ミリ秒・フォールバック用）
+  PAGE_LOAD_TIMEOUT: 15000,
+  // Cloudflare Image Delivery のvariant変換リスト
+  // サムネイルのvariantをフルサイズに変換するためのパターン
+  FULLSIZE_VARIANTS: ["public", "original"],
+  THUMBNAIL_VARIANTS: ["thumbnail", "small", "thumb", "sm", "md", "medium", "w=200", "w=300", "w=400"]
 };
