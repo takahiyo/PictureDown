@@ -42,6 +42,17 @@ const sendProgress = (type, data = {}) => {
 };
 
 /**
+ * フォルダ名をサニタイズする。
+ * Windowsで使えない文字を除去し、安全なパスにする。
+ */
+const sanitizeFolderName = (name) => {
+  return name
+    .replace(/[<>:"|?*\\]/g, '_')
+    .replace(/\.+$/g, '')
+    .trim() || 'download';
+};
+
+/**
  * タブのページ読み込み完了を待つ（フォールバック用）。
  */
 const waitForTabLoad = (tabId) => {
@@ -136,6 +147,7 @@ const downloadFromThumbnails = async (imageUrls, articleId, folderName) => {
       await chrome.downloads.download({
         url: fullUrl,
         filename: `${folderName}/${paddedPage}.${ext}`,
+        saveAs: false,
         conflictAction: 'overwrite'
       });
       successCount++;
@@ -191,6 +203,7 @@ const downloadByNavigation = async (tabId, articleId, folderName, totalPages) =>
         await chrome.downloads.download({
           url: imgUrl,
           filename: `${folderName}/${paddedPage}.${ext}`,
+          saveAs: false,
           conflictAction: 'overwrite'
         });
         successCount++;
@@ -237,16 +250,18 @@ const downloadByNavigation = async (tabId, articleId, folderName, totalPages) =>
  * 取得できていなければページ遷移方式で実行する。
  */
 const startProcess = async (tabId, articleId, folderName, imageUrls, totalPages) => {
+  // フォルダ名をサニタイズ
+  const safeFolderName = sanitizeFolderName(folderName);
   let result;
 
   if (imageUrls && imageUrls.length > 0) {
     // 方式1: サムネイルURLリストから直接ダウンロード（高速）
     console.log(`[PictureDown] サムネイル方式: ${imageUrls.length}枚の画像を検出`);
-    result = await downloadFromThumbnails(imageUrls, articleId, folderName);
+    result = await downloadFromThumbnails(imageUrls, articleId, safeFolderName);
   } else {
     // 方式2: ページ遷移方式（フォールバック）
     console.log(`[PictureDown] ページ遷移方式にフォールバック`);
-    result = await downloadByNavigation(tabId, articleId, folderName, totalPages);
+    result = await downloadByNavigation(tabId, articleId, safeFolderName, totalPages);
   }
 
   // 完了通知

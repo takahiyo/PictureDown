@@ -41,6 +41,23 @@ const scanArticlePage = async (tabId) => {
     func: () => {
       // 記事ページのサムネイル画像を収集する
       const imageUrls = [];
+      // imagedelivery.net の画像IDで重複を判定する
+      const seenImageIds = new Set();
+
+      // URLからimagedelivery.netの画像IDを抽出する
+      const getImageId = (url) => {
+        // 形式: https://imagedelivery.net/ACCOUNT/IMAGE_ID/VARIANT
+        const match = url.match(/imagedelivery\.net\/[^/]+\/([^/]+)/);
+        return match ? match[1] : url;
+      };
+
+      const addUrl = (url) => {
+        const imgId = getImageId(url);
+        if (!seenImageIds.has(imgId)) {
+          seenImageIds.add(imgId);
+          imageUrls.push(url);
+        }
+      };
 
       // 方法1: __NEXT_DATA__ からページデータを取得
       const nextDataEl = document.querySelector('#__NEXT_DATA__');
@@ -51,9 +68,7 @@ const scanArticlePage = async (tabId) => {
           // imagedelivery.net のURLをすべて取得
           const cdnMatches = jsonStr.matchAll(/https:\/\/imagedelivery\.net\/[^"\\]+/g);
           for (const m of cdnMatches) {
-            if (!imageUrls.includes(m[0])) {
-              imageUrls.push(m[0]);
-            }
+            addUrl(m[0]);
           }
         } catch (_e) {
           // パースエラーは無視
@@ -65,8 +80,8 @@ const scanArticlePage = async (tabId) => {
         const allImages = document.querySelectorAll('img');
         for (const img of allImages) {
           const src = img.src || img.getAttribute('data-src') || '';
-          if (src.includes('imagedelivery.net') && !imageUrls.includes(src)) {
-            imageUrls.push(src);
+          if (src.includes('imagedelivery.net')) {
+            addUrl(src);
           }
         }
       }
