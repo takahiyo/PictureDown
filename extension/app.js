@@ -32,73 +32,69 @@ const updateProgress = (percentage) => {
 };
 
 /**
- * 記事一覧ページからページ数とサムネイルURL一覧を取得する。
- * タブ内でスクリプトを実行し、サムネイル画像の情報を返す。
+ * 記事一覧ページからビューアページへのリンクURLを収集する。
  */
 const scanArticlePage = async (tabId) => {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
     func: () => {
-      // 記事ページのサムネイル画像を収集する
-      const imageUrls = [];
-      // imagedelivery.net の画像IDで重複を判定する
-      const seenImageIds = new Set();
+      // ビューアページへのリンクを収集
+      const viewerLinks = [];
+      const anchors = document.querySelectorAll('a[href*="viewer"]');
+      for (const a of anchors) {
+        const href = a.href;
+        if (href && !viewerLinks.includes(href)) {
+          viewerLinks.push(href);
+        }
+      }
 
-      // URLからimagedelivery.netの画像IDを抽出する
+      // imagedelivery.net の画像URLも念のため収集
+      const imageUrls = [];
+      const seenIds = new Set();
       const getImageId = (url) => {
-        // 形式: https://imagedelivery.net/ACCOUNT/IMAGE_ID/VARIANT
         const match = url.match(/imagedelivery\.net\/[^/]+\/([^/]+)/);
         return match ? match[1] : url;
       };
 
-      const addUrl = (url) => {
-        const imgId = getImageId(url);
-        if (!seenImageIds.has(imgId)) {
-          seenImageIds.add(imgId);
-          imageUrls.push(url);
-        }
-      };
-
-      // 方法1: __NEXT_DATA__ からページデータを取得
+      // __NEXT_DATA__ から画像URLを取得
       const nextDataEl = document.querySelector('#__NEXT_DATA__');
       if (nextDataEl) {
         try {
           const data = JSON.parse(nextDataEl.textContent);
           const jsonStr = JSON.stringify(data?.props?.pageProps);
-          // imagedelivery.net のURLをすべて取得
-          const cdnMatches = jsonStr.matchAll(/https:\/\/imagedelivery\.net\/[^"\\]+/g);
-          for (const m of cdnMatches) {
-            addUrl(m[0]);
+          const matches = jsonStr.matchAll(/https:\/\/imagedelivery\.net\/[^"\\]+/g);
+          for (const m of matches) {
+            const imgId = getImageId(m[0]);
+            if (!seenIds.has(imgId)) {
+              seenIds.add(imgId);
+              imageUrls.push(m[0]);
+            }
           }
         } catch (_e) {
-          // パースエラーは無視
+          // 無視
         }
       }
 
-      // 方法2: DOM上のimgタグからimagedelivery.netのURLを取得
+      // DOM上のimgタグからも収集
       if (imageUrls.length === 0) {
-        const allImages = document.querySelectorAll('img');
-        for (const img of allImages) {
+        const imgs = document.querySelectorAll('img');
+        for (const img of imgs) {
           const src = img.src || img.getAttribute('data-src') || '';
           if (src.includes('imagedelivery.net')) {
-            addUrl(src);
+            const imgId = getImageId(src);
+            if (!seenIds.has(imgId)) {
+              seenIds.add(imgId);
+              imageUrls.push(src);
+            }
           }
         }
       }
 
-      // 方法3: サムネイルへのリンク(a[href*="viewer"])の数からページ数を取得
-      const viewerLinks = document.querySelectorAll('a[href*="viewer"]');
-      const linkCount = viewerLinks.length;
-
-      return {
-        imageUrls,
-        linkCount,
-        totalFromDom: Math.max(imageUrls.length, linkCount)
-      };
+      return { viewerLinks, imageUrls };
     }
   });
 
-  return results?.[0]?.result ?? { imageUrls: [], linkCount: 0, totalFromDom: 0 };
+  return results?.[0]?.result ?? { viewerLinks: [], imageUrls: [] };
 };
 
 /**
@@ -106,15 +102,10 @@ const scanArticlePage = async (tabId) => {
  */
 const extractArticleId = (tabUrl) => {
   const url = new URL(tabUrl);
-
-  // 形式1: /viewer?articleId=2374668
   const queryId = url.searchParams.get('articleId');
   if (queryId) return queryId;
-
-  // 形式2: /articles/2374668
   const pathMatch = url.pathname.match(/\/(\d+)(?:\/|$)/);
   if (pathMatch) return pathMatch[1];
-
   return null;
 };
 
@@ -153,28 +144,26 @@ const handleMessage = (request) => {
 
 /**
  * 初期化処理。
- * ページ情報のスキャンとボタン・メッセージリスナーの設定。
  */
 const init = async () => {
   chrome.runtime.onMessage.addListener(handleMessage);
 
-  // 現在のタブから記事IDを取得してフォルダ名のデフォルト値を設定
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab && tab.url.includes(CONFIG.DOMAIN)) {
     const articleId = extractArticleId(tab.url);
     if (articleId) {
-      // フォルダ名のデフォルト値を設定
       DOM.folderName.value = `hentaipaw_${articleId}`;
 
-      // 記事ページのサムネイル数を自動取得
+      // 記事ページをスキャン
       try {
         const scanResult = await scanArticlePage(tab.id);
-        if (scanResult.totalFromDom > 0) {
-          DOM.pageInfo.textContent = `${scanResult.totalFromDom} ページ検出`;
+        const pageCount = scanResult.viewerLinks.length || scanResult.imageUrls.length;
+        if (pageCount > 0) {
+          DOM.pageInfo.textContent = `${pageCount} ページ検出`;
           DOM.pageInfo.classList.remove(CONFIG.CLASSES.HIDDEN);
         }
       } catch (_e) {
-        // スキャン失敗は無視（手動で進行可能）
+        // スキャン失敗は無視
       }
     }
   }
@@ -195,27 +184,26 @@ const init = async () => {
         return;
       }
 
-      // フォルダ名を取得（空の場合はデフォルト値を使用）
       const folderName = DOM.folderName.value.trim() || `hentaipaw_${articleId}`;
 
-      // 記事ページからサムネイルURLを取得
-      let scanResult = { imageUrls: [], linkCount: 0, totalFromDom: 0 };
+      // 記事ページをスキャン
+      let scanResult = { viewerLinks: [], imageUrls: [] };
       try {
         scanResult = await scanArticlePage(currentTab.id);
-      } catch (_e) {
-        // スキャン失敗時はフォールバック
+        console.log('[PictureDown] スキャン結果:', scanResult);
+      } catch (e) {
+        console.warn('[PictureDown] スキャン失敗:', e);
       }
 
       updateStatus(CONFIG.MESSAGES.START);
 
-      // バックグラウンドにダウンロード開始を通知
       chrome.runtime.sendMessage({
         type: CONFIG.REQUEST_TYPES.START,
         tabId: currentTab.id,
         articleId,
         folderName,
-        imageUrls: scanResult.imageUrls,
-        totalPages: scanResult.totalFromDom
+        viewerLinks: scanResult.viewerLinks,
+        imageUrls: scanResult.imageUrls
       });
     } else {
       updateStatus(CONFIG.MESSAGES.ERROR, true);

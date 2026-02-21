@@ -12,7 +12,8 @@
     "scripting"
   ],
   "host_permissions": [
-    "*://hentaipaw.com/*"
+    "*://hentaipaw.com/*",
+    "*://imagedelivery.net/*"
   ],
   "background": {
     "service_worker": "background.js",
