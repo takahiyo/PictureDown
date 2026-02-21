@@ -59,44 +59,41 @@ const getExtension = (url) => {
 };
 
 /**
- * Main download loop. Iterates pages 1..maxPages, fetches each viewer page,
- * extracts the image URL, and triggers a chrome.downloads.download() call.
+ * Main download loop. Continues until a page returns no image URL,
+ * eliminating the need for a fixed max-page limit.
  */
-const startProcess = async (articleId, maxPages) => {
-  for (let i = 1; i <= maxPages; i++) {
+const startProcess = async (articleId) => {
+  let i = 1;
+  while (true) {
     const pageUrl = `${CONFIG.BASE_URL}${articleId}${CONFIG.PAGE_PARAM}${i}`;
 
     try {
       const html = await fetchPageHtml(pageUrl);
       const imgUrl = extractImageUrl(html);
 
-      if (imgUrl) {
-        const ext = getExtension(imgUrl);
-        const paddedPage = String(i).padStart(3, '0');
-        await chrome.downloads.download({
-          url: imgUrl,
-          filename: `hentaipaw_${articleId}_${paddedPage}.${ext}`,
-          conflictAction: 'overwrite'
-        });
-      } else {
-        console.warn(`[PictureDown] No image found on page ${i}: ${pageUrl}`);
+      if (!imgUrl) {
+        break;
       }
 
-      const percentage = Math.floor((i / maxPages) * 100);
+      const ext = getExtension(imgUrl);
+      const paddedPage = String(i).padStart(3, '0');
+      await chrome.downloads.download({
+        url: imgUrl,
+        filename: `hentaipaw_${articleId}_${paddedPage}.${ext}`,
+        conflictAction: 'overwrite'
+      });
+
       chrome.runtime.sendMessage({
         type: CONFIG.REQUEST_TYPES.PROGRESS,
-        percentage,
-        current: i,
-        total: maxPages
-      }).catch(() => {
-        // Popup may have been closed; ignore messaging errors
-      });
+        current: i
+      }).catch(() => {});
 
       // 1-second delay between requests to reduce server load
       await new Promise(resolve => setTimeout(resolve, 1000));
+      i++;
 
     } catch (e) {
-      console.error(`[PictureDown] Error on page ${i}:`, e);
+      break;
     }
   }
 
@@ -105,6 +102,6 @@ const startProcess = async (articleId, maxPages) => {
 
 chrome.runtime.onMessage.addListener((request) => {
   if (request.type === CONFIG.REQUEST_TYPES.START) {
-    startProcess(request.articleId, request.maxPages);
+    startProcess(request.articleId);
   }
 });

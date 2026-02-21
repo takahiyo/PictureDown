@@ -18,12 +18,12 @@ export const CONFIG = {
   MESSAGES: {
     START: "DOWNLOADING...",
     DONE: "COMPLETED",
-    ERROR: "ERROR OCCURRED"
+    ERROR: "ERROR OCCURRED",
+    COUNT_SUFFIX: "枚完了"
   },
   REQUEST_TYPES: {
     START: "START_DOWNLOAD",
     PROGRESS: "PROGRESS",
     DONE: "DONE"
-  },
-  DEFAULT_MAX_PAGES: 43
+  }
 };

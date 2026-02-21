@@ -25,8 +25,7 @@ const updateProgress = (percentage) => {
 
 const handleMessage = (request) => {
   if (request.type === CONFIG.REQUEST_TYPES.PROGRESS) {
-    updateProgress(request.percentage);
-    updateStatus(`${CONFIG.MESSAGES.START} (${request.current}/${request.total})`);
+    updateStatus(`${CONFIG.MESSAGES.START} (${request.current}${CONFIG.MESSAGES.COUNT_SUFFIX})`);
   }
   if (request.type === CONFIG.REQUEST_TYPES.DONE) {
     updateProgress(100);
@@ -50,8 +49,7 @@ const init = () => {
       const articleId = urlParams.get('articleId');
       chrome.runtime.sendMessage({
         type: CONFIG.REQUEST_TYPES.START,
-        articleId: articleId,
-        maxPages: CONFIG.DEFAULT_MAX_PAGES
+        articleId: articleId
       });
     } else {
       updateStatus(CONFIG.MESSAGES.ERROR, true);
